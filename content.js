@@ -52,8 +52,7 @@
 
     if (property.type === "domain") {
       const host = target.hostname.toLowerCase();
-      matches = host === property.value ||
-        host.endsWith(`.${property.value}`);
+      matches = host === property.value || host.endsWith(`.${property.value}`);
     } else {
       matches = target.href.startsWith(property.value);
     }
@@ -81,7 +80,6 @@
         return false;
       }
     }
-
     return true;
   }
 
@@ -105,15 +103,17 @@
   }
 
   function requestButton() {
+    // Robustly find REQUEST INDEXING button across indexed and unindexed states
     return [...document.querySelectorAll(
-      'button, div[role="button"], span[role="button"]'
+      'button, div[role="button"], span[role="button"], a[role="button"]'
     )].find(element => {
       const text = (element.innerText || element.textContent || "").trim();
       const label = (element.getAttribute("aria-label") || "").trim();
 
       return isVisible(element) &&
         (/^request indexing$/i.test(text) ||
-         /^request indexing$/i.test(label));
+         /^request indexing$/i.test(label) ||
+         text.toLowerCase().includes("request indexing"));
     });
   }
 
@@ -155,10 +155,7 @@
     if (setter) setter.call(input, url);
     else input.value = url;
 
-    input.dispatchEvent(new Event("input", {
-      bubbles: true,
-      composed: true
-    }));
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
 
     const options = {
@@ -183,7 +180,6 @@
   }
 
   async function waitForInspection(url, startedAt) {
-    // Increased deadline to 120 seconds for uncached or slow pages
     const deadline = startedAt + 120000;
 
     while (Date.now() < deadline) {
@@ -201,15 +197,16 @@
       if (isLoading()) continue;
 
       const button = requestButton();
-      if (button && inspectionShows(url) &&
-          !button.hasAttribute("disabled") &&
-          button.getAttribute("aria-disabled") !== "true") {
+      if (button && inspectionShows(url)) {
+        if (button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true") {
+          continue;
+        }
         return button;
       }
     }
 
     throw new Error(
-      "Inspection timed out (120s). No indexing request was sent for this URL."
+      "Inspection timed out (120s). GSC did not render the Request Indexing button for this URL."
     );
   }
 
