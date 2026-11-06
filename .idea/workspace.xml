@@ -1,12 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="361c9df4-9186-4e66-ac8d-acc51569f815" name="Changes" comment="V1.3_Sending_Indexing_Request">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+    <list default="true" id="361c9df4-9186-4e66-ac8d-acc51569f815" name="Changes" comment="V1.4_Automatic">
       <change beforePath="$PROJECT_DIR$/content.js" beforeDir="false" afterPath="$PROJECT_DIR$/content.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/manifest.json" beforeDir="false" afterPath="$PROJECT_DIR$/manifest.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/popup.html" beforeDir="false" afterPath="$PROJECT_DIR$/popup.html" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/popup.js" beforeDir="false" afterPath="$PROJECT_DIR$/popup.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -98,7 +94,15 @@
       <option name="project" value="LOCAL" />
       <updated>1793952974287</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="V1.4_Automatic">
+      <option name="closed" value="true" />
+      <created>1793955245782</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1793955245782</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -123,6 +127,7 @@
     <MESSAGE value="V1.2_Finding_the_next_button" />
     <MESSAGE value="V1.3_Property_Mismatch" />
     <MESSAGE value="V1.3_Sending_Indexing_Request" />
-    <option name="LAST_COMMIT_MESSAGE" value="V1.3_Sending_Indexing_Request" />
+    <MESSAGE value="V1.4_Automatic" />
+    <option name="LAST_COMMIT_MESSAGE" value="V1.4_Automatic" />
   </component>
 </project>
