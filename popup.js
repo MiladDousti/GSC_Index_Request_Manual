@@ -11,36 +11,16 @@ async function sendTabMessage(tab, payload) {
   try {
     return await chrome.tabs.sendMessage(tab.id, payload);
   } catch (err) {
-    // Dynamic injection if script isn't running
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ["content.js"]
     });
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 150));
     return await chrome.tabs.sendMessage(tab.id, payload);
   }
 }
 
-// Check Handshake
-document.getElementById("pingBtn").addEventListener("click", async () => {
-  const statusBox = document.getElementById("status-box");
-  statusBox.className = "";
-  statusBox.textContent = "Probing connection...";
-
-  try {
-    const tab = await getActiveGscTab();
-    const res = await sendTabMessage(tab, { type: "PING" });
-    if (res?.status === "PONG") {
-      statusBox.className = "ok";
-      statusBox.textContent = `SUCCESS: Handshake verified!\nTab: ${tab.id}\nPage: "${res.title}"`;
-    }
-  } catch (err) {
-    statusBox.className = "err";
-    statusBox.textContent = `Ping failed:\n${err.message}`;
-  }
-});
-
-// Run Step 1: Type URL and Submit
+// Step 1: Type URL and Submit
 document.getElementById("inspectBtn").addEventListener("click", async () => {
   const statusBox = document.getElementById("status-box");
   const url = document.getElementById("targetUrl").value.trim();
@@ -52,7 +32,7 @@ document.getElementById("inspectBtn").addEventListener("click", async () => {
   }
 
   statusBox.className = "";
-  statusBox.textContent = `Targeting input for:\n${url}...`;
+  statusBox.textContent = `Submitting:\n${url}...`;
 
   try {
     const tab = await getActiveGscTab();
@@ -60,13 +40,50 @@ document.getElementById("inspectBtn").addEventListener("click", async () => {
 
     if (res?.ok) {
       statusBox.className = "ok";
-      statusBox.textContent = `SUCCESS:\n- Element Found: ${res.matchedSelector}\n- Value Applied: ${res.appliedValue}\n- Enter Dispatched: true\n\nObserve GSC tab to verify if the retrieval loader/animation started!`;
+      statusBox.textContent = `SUCCESS: Inspection Triggered!\n- Target: ${res.appliedValue}\n\nWait until GSC finishes loading the result page, then click "2. Check 'Request Indexing' Button".`;
     } else {
       statusBox.className = "err";
       statusBox.textContent = `FAILED:\n${res?.error || "Unknown error"}`;
     }
   } catch (err) {
     statusBox.className = "err";
-    statusBox.textContent = `Execution Error:\n${err.message}`;
+    statusBox.textContent = `Error:\n${err.message}`;
+  }
+});
+
+// Step 2: Check "Request Indexing" Button
+document.getElementById("findRequestBtn").addEventListener("click", async () => {
+  const statusBox = document.getElementById("status-box");
+  statusBox.className = "";
+  statusBox.textContent = "Scanning active DOM for 'Request Indexing' button...";
+
+  try {
+    const tab = await getActiveGscTab();
+    const res = await sendTabMessage(tab, { type: "FIND_REQUEST_INDEXING_BUTTON" });
+
+    if (res?.found) {
+      statusBox.className = "ok";
+      statusBox.textContent = [
+        "SUCCESS: Button Found!",
+        "",
+        `Text: "${res.text}"`,
+        `Tag: <${res.tag}>`,
+        `Role: ${res.role}`,
+        `Aria-Disabled: ${res.ariaDisabled}`,
+        `Disabled Attribute: ${res.disabledAttr}`,
+        `Position: Top=${Math.round(res.rect.top)}px, Left=${Math.round(res.rect.left)}px`
+      ].join("\n");
+    } else {
+      statusBox.className = "err";
+      statusBox.textContent = [
+        "FAILED: Button not found.",
+        "",
+        `Reason: ${res?.reason || "Element not detected"}`,
+        `Is Inspection Loader still active? ${res?.loaderActive ? "YES" : "NO"}`
+      ].join("\n");
+    }
+  } catch (err) {
+    statusBox.className = "err";
+    statusBox.textContent = `Error:\n${err.message}`;
   }
 });
