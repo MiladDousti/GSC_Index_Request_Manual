@@ -8,7 +8,8 @@
 
   let running = false;
 
-  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const pause = ms =>
+    new Promise(resolve => setTimeout(resolve, ms));
 
   function searchInput() {
     return (
@@ -32,11 +33,17 @@
     }
 
     if (/^https?:\/\//i.test(text)) {
-      return { type: "prefix", value: new URL(text).href };
+      return {
+        type: "prefix",
+        value: new URL(text).href
+      };
     }
 
     if (/^[a-z0-9.-]+$/i.test(text)) {
-      return { type: "domain", value: text.toLowerCase() };
+      return {
+        type: "domain",
+        value: text.toLowerCase()
+      };
     }
 
     throw new Error(`Unrecognized GSC property: ${text}`);
@@ -49,9 +56,8 @@
       throw new Error("GSC inspection input was not found.");
     }
 
-    const resourceId = new URL(location.href).searchParams.get(
-      "resource_id"
-    );
+    const resourceId = new URL(location.href)
+      .searchParams.get("resource_id");
 
     const label = input.getAttribute("aria-label") || "";
     const labelMatch = label.match(
@@ -72,8 +78,7 @@
     const matches =
       property.type === "domain"
         ? target.hostname.toLowerCase() === property.value ||
-          target.hostname
-            .toLowerCase()
+          target.hostname.toLowerCase()
             .endsWith(`.${property.value}`)
         : target.href.startsWith(property.value);
 
@@ -90,6 +95,7 @@
     if (!element || !element.isConnected) return false;
 
     const rect = element.getBoundingClientRect();
+
     if (!rect.width || !rect.height) return false;
 
     for (
@@ -121,18 +127,15 @@
   }
 
   function isLoading() {
-    const loadingText =
+    const pattern =
       /retrieving data|inspecting url|submitting|testing if live url/i;
 
-    if (
+    return (
       visibleDialogs().some(dialog =>
-        loadingText.test(dialog.innerText || "")
-      )
-    ) {
-      return true;
-    }
-
-    return loadingText.test(document.body?.innerText || "");
+        pattern.test(dialog.innerText || "")
+      ) ||
+      pattern.test(document.body?.innerText || "")
+    );
   }
 
   function requestButton() {
@@ -161,7 +164,7 @@
   }
 
   function isEnabled(element) {
-    return (
+    return Boolean(
       element &&
       !element.hasAttribute("disabled") &&
       element.getAttribute("aria-disabled") !== "true"
@@ -174,7 +177,8 @@
   }
 
   function inspectedUrl() {
-    const id = new URL(location.href).searchParams.get("id");
+    const id = new URL(location.href)
+      .searchParams.get("id");
 
     if (!id) return null;
 
@@ -185,20 +189,103 @@
     }
   }
 
-  function sameUrl(a, b) {
-    if (!a || !b) return false;
+  function sameUrl(first, second) {
+    if (!first || !second) return false;
 
     try {
-      return new URL(a).href === new URL(b).href;
+      return new URL(first).href ===
+        new URL(second).href;
     } catch {
       return false;
     }
   }
 
   /*
-   * Find the visible confirmation itself, rather than searching all
-   * page text. The heading and crawl-queue message must occur inside
-   * the same reasonably small UI container.
+   * A GSC control can be a button, link, role="button",
+   * or an element with a delegated click handler.
+   * Also retain the text element as a fallback: its click
+   * bubbles to a parent handler.
+   */
+  function dismissCandidates(container) {
+    const candidates = [];
+    const seen = new Set();
+    const labelPattern = /^(dismiss|got it|ok|close)$/i;
+
+    function add(element) {
+      if (
+        element &&
+        isVisible(element) &&
+        !seen.has(element)
+      ) {
+        seen.add(element);
+        candidates.push(element);
+      }
+    }
+
+    for (
+      const element of container.querySelectorAll(
+        'button, a, [role="button"], [aria-label]'
+      )
+    ) {
+      const label = (
+        element.getAttribute("aria-label") ||
+        element.innerText ||
+        element.textContent ||
+        ""
+      ).trim();
+
+      if (labelPattern.test(label)) add(element);
+    }
+
+    const walker = document.createTreeWalker(
+      container,
+      NodeFilter.SHOW_TEXT
+    );
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+
+      if (
+        !labelPattern.test(
+          (node.textContent || "").trim()
+        )
+      ) {
+        continue;
+      }
+
+      const textElement = node.parentElement;
+
+      if (!isVisible(textElement)) continue;
+
+      const clickable = textElement.closest(
+        'button, a, [role="button"], [tabindex], [jsaction]'
+      );
+
+      if (
+        clickable &&
+        container.contains(clickable) &&
+        labelPattern.test(
+          (
+            clickable.innerText ||
+            clickable.textContent ||
+            clickable.getAttribute("aria-label") ||
+            ""
+          ).trim()
+        )
+      ) {
+        add(clickable);
+      }
+
+      add(textElement);
+    }
+
+    return candidates;
+  }
+
+  /*
+   * Find a compact visible container containing both parts
+   * of GSC's success message. Prefer a container that also
+   * contains its Dismiss control.
    */
   function successOverlay() {
     if (!document.body) return null;
@@ -220,76 +307,78 @@
       }
 
       let element = node.parentElement;
-
-      if (!isVisible(element)) continue;
+      let fallback = null;
 
       while (
         element &&
         element !== document.body &&
         element !== document.documentElement
       ) {
+        if (!isVisible(element)) break;
+
         const text = element.innerText || "";
 
+        // Avoid matching the entire GSC page.
+        if (text.length > 1800) break;
+
         if (
-          text.length <= 1200 &&
           /indexing requested/i.test(text) &&
-          /priority crawl queue/i.test(text) &&
-          isVisible(element)
+          /priority crawl queue/i.test(text)
         ) {
-          return element;
+          fallback ||= element;
+
+          if (dismissCandidates(element).length) {
+            return element;
+          }
         }
 
         element = element.parentElement;
       }
+
+      if (fallback) return fallback;
     }
 
     return null;
   }
 
-  function dismissSuccess(overlay) {
-    const control = [
-      ...overlay.querySelectorAll(
-        'button, a, [role="button"]'
-      )
-    ].find(element => {
-      const text = (
-        element.innerText ||
-        element.textContent ||
-        element.getAttribute("aria-label") ||
-        ""
-      ).trim();
-
-      return (
-        isVisible(element) &&
-        /^(dismiss|got it|ok|close)$/i.test(text)
-      );
-    });
-
-    if (!control) return false;
-
-    clickElement(control);
-    return true;
-  }
-
-  async function waitForSuccessToClose() {
+  /*
+   * Try each candidate in turn. A click is not considered
+   * successful until the confirmation actually disappears.
+   */
+  async function dismissSuccessAndWait() {
     const deadline = Date.now() + 8000;
+    let attempt = 0;
 
     while (Date.now() < deadline) {
-      if (!successOverlay()) return true;
-      await pause(250);
+      const overlay = successOverlay();
+
+      if (!overlay) return true;
+
+      const candidates = dismissCandidates(overlay);
+
+      if (candidates.length) {
+        const candidate = candidates[
+          Math.min(attempt, candidates.length - 1)
+        ];
+
+        clickElement(candidate);
+        attempt++;
+      }
+
+      await pause(400);
     }
 
     return !successOverlay();
   }
 
   function blockingError() {
-    const errorPattern =
+    const pattern =
       /quota|limit reached|request failed|failed to send|couldn't be sent|could not be sent|something went wrong|url not in property/i;
 
     for (const dialog of visibleDialogs()) {
       const text = (dialog.innerText || "").trim();
 
-      if (errorPattern.test(text)) {
+      if (pattern.test(text)) {
         return text.slice(0, 350);
       }
     }
@@ -320,7 +409,9 @@
     );
 
     input.dispatchEvent(
-      new Event("change", { bubbles: true })
+      new Event("change", {
+        bubbles: true
+      })
     );
 
     const options = {
@@ -333,7 +424,9 @@
       composed: true
     };
 
-    for (const type of ["keydown", "keypress", "keyup"]) {
+    for (
+      const type of ["keydown", "keypress", "keyup"]
+    ) {
       input.dispatchEvent(
         new KeyboardEvent(type, options)
       );
@@ -341,7 +434,8 @@
   }
 
   async function waitForInspection(startedAt, url) {
-    const deadline = startedAt + INSPECTION_TIMEOUT_MS;
+    const deadline =
+      startedAt + INSPECTION_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
       const error = blockingError();
@@ -357,7 +451,10 @@
         !isLoading() &&
         button &&
         isEnabled(button) &&
-        (!displayedUrl || sameUrl(displayedUrl, url))
+        (
+          !displayedUrl ||
+          sameUrl(displayedUrl, url)
+        )
       ) {
         return button;
       }
@@ -371,15 +468,16 @@
   }
 
   async function waitForIndexingResult(startedAt) {
-    const deadline = startedAt + CONFIRMATION_TIMEOUT_MS;
+    const deadline =
+      startedAt + CONFIRMATION_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
-      // Check success FIRST: GSC may still display a loading phrase
-      // elsewhere when its success confirmation becomes visible.
-      const success = successOverlay();
-      if (success) return success;
+      // Check success before loading: other parts of GSC
+      // may still contain transient loading text.
+      if (successOverlay()) return;
 
       const error = blockingError();
+
       if (error) {
         throw new Error(`GSC error: ${error}`);
       }
@@ -396,17 +494,18 @@
     const key = `gscRun_${tabId}`;
 
     async function load() {
-      const stored = (await chrome.storage.local.get(key))[key];
+      const state =
+        (await chrome.storage.local.get(key))[key];
 
       if (
-        !stored ||
-        stored.runId !== runId ||
-        stored.status !== "RUNNING"
+        !state ||
+        state.runId !== runId ||
+        state.status !== "RUNNING"
       ) {
         throw new Error("Run inactive.");
       }
 
-      return stored;
+      return state;
     }
 
     async function save(patch, line) {
@@ -420,33 +519,44 @@
           : current.lines || []
       };
 
-      await chrome.storage.local.set({ [key]: next });
+      await chrome.storage.local.set({
+        [key]: next
+      });
+
       return next;
     }
 
-    async function recordConfirmed(state, number, total, url) {
+    async function recordConfirmed(
+      number,
+      total,
+      url
+    ) {
       const completed = number === total;
 
-      // Persist confirmation before trying to dismiss it.
+      // Record the confirmed URL first. Dismissal must
+      // not erase a genuine successful submission.
       const next = await save(
         {
           index: number,
           phase: "ready",
-          status: completed ? "COMPLETED" : "RUNNING"
+          status: completed
+            ? "COMPLETED"
+            : "RUNNING"
         },
         `${number}/${total} — SUCCESS: GSC confirmed indexing request for ${url}`
       );
 
-      const overlay = successOverlay();
-
-      if (overlay) {
-        dismissSuccess(overlay);
+      if (
+        !completed &&
+        !(await dismissSuccessAndWait())
+      ) {
+        throw new Error(
+          "Request confirmed, but its confirmation is still open. Queue paused before the next URL."
+        );
       }
 
-      if (!completed && !(await waitForSuccessToClose())) {
-        throw new Error(
-          "Request confirmed, but the confirmation could not be dismissed. Queue paused before the next URL."
-        );
+      if (completed) {
+        await dismissSuccessAndWait();
       }
 
       return next;
@@ -464,27 +574,29 @@
           const { input, property } =
             checkedProperty(url);
 
-          const existingSuccess = successOverlay();
+          const previousConfirmation =
+            successOverlay();
 
-          if (existingSuccess) {
-            if (sameUrl(inspectedUrl(), url)) {
-              // A previous run may have timed out after GSC
-              // confirmed this exact URL. Don't submit it twice
-              // while that confirmation is still visible.
+          if (previousConfirmation) {
+            if (
+              sameUrl(inspectedUrl(), url)
+            ) {
+              // A confirmation for this exact URL was
+              // left open. Do not submit it twice.
               state = await recordConfirmed(
-                state,
                 number,
                 total,
                 url
               );
+
               continue;
             }
 
-            dismissSuccess(existingSuccess);
-
-            if (!(await waitForSuccessToClose())) {
+            if (
+              !(await dismissSuccessAndWait())
+            ) {
               throw new Error(
-                "A previous URL's confirmation is still open. Dismiss it before continuing."
+                "A previous confirmation is still open. Dismiss it before continuing."
               );
             }
           }
@@ -502,10 +614,11 @@
         }
 
         if (state.phase === "inspecting") {
-          const button = await waitForInspection(
-            state.phaseAt,
-            url
-          );
+          const button =
+            await waitForInspection(
+              state.phaseAt,
+              url
+            );
 
           state = await save(
             {
@@ -519,11 +632,14 @@
           continue;
         }
 
-        if (state.phase === "await_confirmation") {
-          await waitForIndexingResult(state.phaseAt);
+        if (
+          state.phase === "await_confirmation"
+        ) {
+          await waitForIndexingResult(
+            state.phaseAt
+          );
 
           state = await recordConfirmed(
-            state,
             number,
             total,
             url
@@ -572,18 +688,24 @@
 
     running = true;
     void runQueue(tabId, runId);
+
     return true;
   }
 
   chrome.runtime.onMessage.addListener(
     (message, sender, sendResponse) => {
       if (message?.type === "GSC_PING") {
-        sendResponse({ reply: "PONG" });
+        sendResponse({
+          reply: "PONG"
+        });
       }
 
       if (message?.type === "GSC_START") {
         sendResponse(
-          start(message.tabId, message.runId)
+          start(
+            message.tabId,
+            message.runId
+          )
             ? { ok: true }
             : { ok: false }
         );
@@ -593,18 +715,24 @@
 
   void (async () => {
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: "GSC_GET_TAB_ID"
-      });
+      const response =
+        await chrome.runtime.sendMessage({
+          type: "GSC_GET_TAB_ID"
+        });
 
       if (response?.tabId == null) return;
 
-      const key = `gscRun_${response.tabId}`;
+      const key =
+        `gscRun_${response.tabId}`;
+
       const state =
         (await chrome.storage.local.get(key))[key];
 
       if (state?.status === "RUNNING") {
-        start(response.tabId, state.runId);
+        start(
+          response.tabId,
+          state.runId
+        );
       }
     } catch (error) {
       console.error(
