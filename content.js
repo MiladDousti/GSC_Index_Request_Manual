@@ -79,8 +79,10 @@
       if (
         text.includes("url not in property") ||
         text.includes("currently selected property") ||
+        text.includes("added to a priority crawl queue") ||
         text.includes("indexing requested") ||
-        text.includes("quota exceeded")
+        text.includes("quota exceeded") ||
+        text.includes("failed")
       ) {
         return d;
       }
@@ -155,11 +157,10 @@
         }
       }
 
-      // Check if the "Request Indexing" button has appeared and is active
       const button = requestButton();
       if (button) {
         if (button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true") {
-          continue; // Wait until it's fully enabled
+          continue;
         }
         return button;
       }
@@ -169,29 +170,35 @@
   }
 
   async function waitForIndexingResult() {
-    const deadline = Date.now() + 60000;
+    const deadline = Date.now() + 75000;
 
     while (Date.now() < deadline) {
-      await pause(800);
+      await pause(1000);
 
-      const dialog = getActiveBlockingDialog();
-      if (!dialog) continue;
+      const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[aria-modal="true"]')).filter(isElementVisible);
 
-      const text = (dialog.innerText || "").trim();
-      const lower = text.toLowerCase();
+      for (const d of dialogs) {
+        const text = (d.innerText || "").trim();
+        const lower = text.toLowerCase();
 
-      if (lower.includes("added to a priority crawl queue") || lower.includes("indexing requested")) {
-        const dismissed = dismissDialog(dialog);
-        return { success: true, message: text, dismissed };
-      }
+        // Ignore transient loading/retrieving dialogs
+        if (lower.includes("retrieving data") || lower.includes("submitting")) {
+          continue;
+        }
 
-      if (/quota|limit reached|failed|could not be indexed/i.test(lower)) {
-        dismissDialog(dialog);
-        throw new Error(`GSC rejected request: ${text}`);
+        if (lower.includes("added to a priority crawl queue") || lower.includes("indexing requested")) {
+          const dismissed = dismissDialog(d);
+          return { success: true, message: text, dismissed };
+        }
+
+        if (/quota|limit reached|failed|could not be indexed/i.test(lower)) {
+          dismissDialog(d);
+          throw new Error(`GSC rejected request: ${text}`);
+        }
       }
     }
 
-    throw new Error("Timeout: No confirmation dialog detected from GSC within 60 seconds.");
+    throw new Error("Timeout: No confirmation dialog detected from GSC within 75 seconds.");
   }
 
   async function runWorkflow({ runId, tabId, url }) {
@@ -224,9 +231,9 @@
       const button = await waitForInspection(target.href);
       await update("3. OK — URL inspection complete. Request Indexing button found.");
 
-      await pause(600);
+      await pause(800);
       clickElement(button);
-      await update("4. Clicked 'Request Indexing'. Awaiting GSC response...");
+      await update("4. Clicked 'Request Indexing'. Awaiting GSC priority queue confirmation...");
 
       const result = await waitForIndexingResult();
       await update(
