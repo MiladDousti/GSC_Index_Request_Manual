@@ -99,11 +99,10 @@
     return dialogs().some(dialog =>
       /retrieving data|inspecting url|submitting/i
         .test(dialog.innerText || "")
-    );
+    ) || document.body.innerText.includes("Retrieving data from Google index");
   }
 
   function requestButton() {
-    // Robustly find REQUEST INDEXING button across indexed and unindexed states
     return [...document.querySelectorAll(
       'button, div[role="button"], span[role="button"], a[role="button"]'
     )].find(element => {
@@ -173,13 +172,7 @@
     }
   }
 
-  function inspectionShows(url) {
-    const main = document.querySelector('main, [role="main"]') || document.body;
-    return location.pathname.includes("/inspect") &&
-      (main.innerText || "").includes(url);
-  }
-
-  async function waitForInspection(url, startedAt) {
+  async function waitForInspection(startedAt) {
     const deadline = startedAt + 120000;
 
     while (Date.now() < deadline) {
@@ -197,7 +190,7 @@
       if (isLoading()) continue;
 
       const button = requestButton();
-      if (button && inspectionShows(url)) {
+      if (button) {
         if (button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true") {
           continue;
         }
@@ -206,7 +199,7 @@
     }
 
     throw new Error(
-      "Inspection timed out (120s). GSC did not render the Request Indexing button for this URL."
+      "Inspection timed out (120s). Request Indexing button did not appear."
     );
   }
 
@@ -296,7 +289,7 @@
 
         if (state.phase === "inspecting") {
           checkedProperty(url);
-          const button = await waitForInspection(url, state.phaseAt);
+          const button = await waitForInspection(state.phaseAt);
 
           if (!button.isConnected) {
             throw new Error("The inspection button disappeared before clicking.");
