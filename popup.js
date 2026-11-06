@@ -1,167 +1,136 @@
-const urlInput = document.getElementById("targetUrl");
-const startButton = document.getElementById("startBtn");
-const reportBox = document.getElementById("report");
+const input = document.getElementById("urls");
+const counter = document.getElementById("counter");
+const startButton = document.getElementById("start");
+const report = document.getElementById("report");
 
-let currentKey = null;
-let starting = false;
+let tabId = null;
+let runKey = null;
 
-function render(state) {
-  reportBox.textContent = state.lines.join("\n");
-  startButton.disabled = starting || state.status === "RUNNING";
+function updateCounter() {
+  const count = input.value.split(/\r?\n/).filter(line => line.trim()).length;
+  counter.textContent = `${count} / 14 URLs`;
 }
 
-function showError(message) {
-  reportBox.textContent = `FAILED: ${message}`;
-  startButton.disabled = false;
-}
+function parseUrls() {
+  const lines = input.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 
-async function saveState(key, state) {
-  await chrome.storage.local.set({ [key]: state });
-  if (key === currentKey) render(state);
-}
+  if (lines.length < 1 || lines.length > 14) {
+    throw new Error("Enter between 1 and 14 URLs, one per line.");
+  }
 
-async function sendToTab(tabId, message) {
-  try {
-    return await chrome.tabs.sendMessage(tabId, message);
-  } catch (error) {
-    // Inject only when there is no content-script receiver.
-    if (!/Receiving end does not exist/i.test(error.message)) {
-      throw error;
+  const urls = lines.map((line, index) => {
+    let url;
+    try {
+      url = new URL(line);
+    } catch {
+      throw new Error(`Line ${index + 1} is not a valid absolute URL.`);
     }
 
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"]
-    });
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname ||
+        url.username || url.password || url.hash) {
+      throw new Error(`Line ${index + 1} must be an HTTP(S) URL without credentials or a fragment.`);
+    }
 
-    return chrome.tabs.sendMessage(tabId, message);
-  }
-}
-
-async function getGscTab() {
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true
+    return url.href;
   });
 
-  if (!tab?.id) throw new Error("No active tab found.");
-
-  const page = new URL(tab.url || "about:blank");
-  if (
-    page.origin !== "https://search.google.com" ||
-    !page.pathname.includes("/search-console")
-  ) {
-    throw new Error("Open the intended Google Search Console tab first.");
+  if (new Set(urls).size !== urls.length) {
+    throw new Error("Remove duplicate URLs before starting.");
   }
 
-  return tab;
+  return urls;
 }
 
-async function restoreReport() {
-  try {
-    const tab = await getGscTab();
-    currentKey = `gscRun_${tab.id}`;
+function render(state) {
+  if (!state) {
+    report.textContent = "No run started.";
+    startButton.disabled = false;
+    return;
+  }
 
-    const stored = (await chrome.storage.local.get(currentKey))[currentKey];
-    if (!stored) return;
+  const progress = `${state.index} / ${state.urls.length} completed`;
+  report.textContent = [
+    `Status: ${state.status} — ${progress}`,
+    ...state.lines
+  ].join("\n");
 
-    urlInput.value = stored.url;
-    render(stored);
+  startButton.disabled = state.status === "RUNNING";
+}
 
-    // A tab reload can terminate an in-progress content script.
-    if (stored.status === "RUNNING") {
-      const response = await sendToTab(tab.id, { type: "GSC_RUN_STATUS" });
+async function init() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-      if (!response?.running) {
-        stored.status = "INTERRUPTED";
-        stored.lines.push(
-          "STOPPED: The previous run is no longer active. Check GSC before starting again."
-        );
-        await saveState(currentKey, stored);
-      }
+  if (!tab?.id || !tab.url?.startsWith("https://search.google.com/")) {
+    report.textContent = "Open a Google Search Console tab first.";
+    startButton.disabled = true;
+    return;
+  }
+
+  tabId = tab.id;
+  runKey = `gscRun_${tabId}`;
+
+  const saved = await chrome.storage.local.get(["gscUrlDraft", runKey]);
+  input.value = saved.gscUrlDraft || "";
+  updateCounter();
+  render(saved[runKey]);
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[runKey]) {
+      render(changes[runKey].newValue);
     }
-  } catch {
-    // The popup can still display a fresh error when Start is clicked.
-  }
+  });
 }
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && currentKey && changes[currentKey]?.newValue) {
-    render(changes[currentKey].newValue);
-  }
+input.addEventListener("input", () => {
+  updateCounter();
+  void chrome.storage.local.set({ gscUrlDraft: input.value });
 });
 
 startButton.addEventListener("click", async () => {
-  if (starting) return;
-  starting = true;
-  startButton.disabled = true;
-
-  let state;
-
   try {
-    const target = new URL(urlInput.value.trim());
+    const urls = parseUrls();
+    const existing = (await chrome.storage.local.get(runKey))[runKey];
 
-    if (!["http:", "https:"].includes(target.protocol)) {
-      throw new Error("Enter an HTTP or HTTPS URL.");
-    }
-
-    reportBox.textContent = "1. Checking the GSC tab and content script...";
-
-    const tab = await getGscTab();
-    currentKey = `gscRun_${tab.id}`;
-
-    const existing = (await chrome.storage.local.get(currentKey))[currentKey];
     if (existing?.status === "RUNNING") {
-      const status = await sendToTab(tab.id, { type: "GSC_RUN_STATUS" });
-      if (status?.running) {
-        throw new Error("A run is already active in this GSC tab.");
-      }
+      throw new Error("A queue is already running in this tab.");
     }
 
-    state = {
-      runId: crypto.randomUUID(),
-      tabId: tab.id,
-      url: target.href,
-      status: "RUNNING",
-      lines: ["1. Checking the GSC tab and content script..."]
-    };
-    await saveState(currentKey, state);
-
-    const ping = await sendToTab(tab.id, { type: "GSC_PING" });
+    const ping = await chrome.tabs.sendMessage(tabId, { type: "GSC_PING" });
     if (ping?.reply !== "PONG") {
-      throw new Error("GSC tab is open, but the content script did not respond.");
+      throw new Error("GSC content script did not respond. Refresh the GSC tab.");
     }
 
-    state.lines[0] = "1. OK — GSC tab and content script are responding.";
-    await saveState(currentKey, state);
+    const runId = crypto.randomUUID();
+    const state = {
+      runId,
+      tabId,
+      urls,
+      index: 0,
+      phase: "ready",
+      status: "RUNNING",
+      lines: ["1. OK — GSC tab and content script are responding."]
+    };
 
-    const started = await sendToTab(tab.id, {
+    await chrome.storage.local.set({ [runKey]: state });
+    const response = await chrome.tabs.sendMessage(tabId, {
       type: "GSC_START",
-      runId: state.runId,
-      tabId: tab.id,
-      url: target.href
+      tabId,
+      runId
     });
 
-    if (!started?.ok) {
-      throw new Error(started?.error || "Could not start the workflow.");
+    if (!response?.ok) {
+      throw new Error(response?.error || "Could not start the queue.");
     }
   } catch (error) {
-    if (state && currentKey) {
-      state.status = "FAILED";
-      state.lines.push(`STOPPED: ${error.message}`);
-      await saveState(currentKey, state);
-    } else {
-      showError(error.message);
-    }
-  } finally {
-    starting = false;
-    if (currentKey) {
-      const saved = (await chrome.storage.local.get(currentKey))[currentKey];
-      if (saved) render(saved);
-    } else {
-      startButton.disabled = false;
-    }
+    // A GSC navigation immediately after starting can interrupt this reply.
+    // The content script will resume from the saved state on the new page.
+    const state = runKey && (await chrome.storage.local.get(runKey))[runKey];
+    report.textContent = state?.status === "RUNNING"
+      ? `${state.lines.join("\n")}\nStart acknowledged or navigation in progress. Reopen this popup to check progress.`
+      : `STOPPED: ${error.message}`;
   }
 });
 
-restoreReport();
+void init().catch(error => {
+  report.textContent = `STOPPED: ${error.message}`;
+});
