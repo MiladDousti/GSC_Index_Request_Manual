@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "GSC Diagnostic Ping",
+  "version": "1.0.0",
+  "description": "Diagnostic tool to verify MV3 content script injection and communication.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://search.google.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://search.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
