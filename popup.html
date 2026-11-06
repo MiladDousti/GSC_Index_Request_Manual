@@ -16,22 +16,34 @@
       font-size: 14px;
       font-weight: 600;
     }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 12px;
+    }
     button {
       width: 100%;
       background-color: #2563eb;
       color: #ffffff;
       border: none;
-      padding: 10px;
+      padding: 9px;
       border-radius: 6px;
       font-weight: 500;
       cursor: pointer;
       font-size: 13px;
+      margin-bottom: 6px;
     }
-    button:hover {
-      background-color: #1d4ed8;
+    button:hover { background-color: #1d4ed8; }
+    button.secondary {
+      background-color: #64748b;
     }
+    button.secondary:hover { background-color: #475569; }
     #status-box {
-      margin-top: 12px;
+      margin-top: 10px;
       padding: 10px;
       border-radius: 6px;
       font-size: 12px;
@@ -47,9 +59,14 @@
   </style>
 </head>
 <body>
-  <h3>GSC Content Script Handshake</h3>
-  <button id="pingBtn">Check Connection</button>
-  <div id="status-box">Status: Ready. Click above to probe.</div>
+  <h3>GSC URL Input Tester</h3>
+
+  <input type="text" id="targetUrl" placeholder="Enter target URL to test" value="https://research.agah.com/" />
+
+  <button id="inspectBtn">1. Type URL & Press Enter</button>
+  <button id="pingBtn" class="secondary">Check Ping</button>
+
+  <div id="status-box">Status: Ready.</div>
   <script src="popup.js"></script>
 </body>
 </html>
