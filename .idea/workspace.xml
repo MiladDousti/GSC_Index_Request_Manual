@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="361c9df4-9186-4e66-ac8d-acc51569f815" name="Changes" comment="V1.11_Automatic_Worked_But_Just_First">
+    <list default="true" id="361c9df4-9186-4e66-ac8d-acc51569f815" name="Changes" comment="V1.12_Automatic_Worked_But_Just_First">
       <change beforePath="$PROJECT_DIR$/content.js" beforeDir="false" afterPath="$PROJECT_DIR$/content.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -166,7 +166,15 @@
       <option name="project" value="LOCAL" />
       <updated>1793960139732</updated>
     </task>
-    <option name="localTasksCounter" value="16" />
+    <task id="LOCAL-00016" summary="V1.12_Automatic_Worked_But_Just_First">
+      <option name="closed" value="true" />
+      <created>1793960399513</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1793960399513</updated>
+    </task>
+    <option name="localTasksCounter" value="17" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -200,6 +208,7 @@
     <MESSAGE value="V1.9_Automatic_Worked_But_tIME_OUT" />
     <MESSAGE value="V1.10_Automatic_Worked_But_Just_First" />
     <MESSAGE value="V1.11_Automatic_Worked_But_Just_First" />
-    <option name="LAST_COMMIT_MESSAGE" value="V1.11_Automatic_Worked_But_Just_First" />
+    <MESSAGE value="V1.12_Automatic_Worked_But_Just_First" />
+    <option name="LAST_COMMIT_MESSAGE" value="V1.12_Automatic_Worked_But_Just_First" />
   </component>
 </project>
