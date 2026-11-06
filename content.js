@@ -1,37 +1,166 @@
 (() => {
-  if (window.__GSC_INSPECTOR_RUNNER_LOADED__) return;
-  window.__GSC_INSPECTOR_RUNNER_LOADED__ = true;
+  if (globalThis.__GSC_SINGLE_URL_RUNNER__) return;
+  globalThis.__GSC_SINGLE_URL_RUNNER__ = true;
 
-  console.log("[GSC-Diagnostic] content.js initialized with property mismatch handler.");
+  let running = false;
 
-  function findGscSearchInput() {
-    let input = document.querySelector('input[role="combobox"][aria-label*="Inspect any URL"]');
-    if (input) return { element: input, selector: 'input[role="combobox"][aria-label*="Inspect any URL"]' };
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-    input = document.querySelector('input[role="combobox"][jsname="dSO9oc"]');
-    if (input) return { element: input, selector: 'input[role="combobox"][jsname="dSO9oc"]' };
-
-    return null;
+  function searchInput() {
+    return document.querySelector(
+      'input[role="combobox"][aria-label*="Inspect any URL"]'
+    ) || document.querySelector(
+      'input[role="combobox"][jsname="dSO9oc"]'
+    );
   }
 
-  function setInputValue(input, value) {
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
+  function parseProperty(value) {
+    const text = value.trim();
+
+    if (text.toLowerCase().startsWith("sc-domain:")) {
+      return { type: "domain", value: text.slice(10).toLowerCase() };
+    }
+
+    if (/^https?:\/\//i.test(text)) {
+      return { type: "prefix", value: new URL(text).href };
+    }
+
+    // The input label may display a domain property without "sc-domain:".
+    if (/^[a-z0-9.-]+$/i.test(text)) {
+      return { type: "domain", value: text.toLowerCase() };
+    }
+
+    throw new Error(`Unrecognized GSC property: ${text}`);
+  }
+
+  function propertyKey(property) {
+    return `${property.type}:${property.value}`;
+  }
+
+  function checkedProperty(targetUrl) {
+    const input = searchInput();
+    if (!input) throw new Error("GSC inspection input was not found.");
+
+    const fromAddress = new URL(location.href).searchParams.get("resource_id");
+    const label = input.getAttribute("aria-label") || "";
+    const fromInput = label.match(/^Inspect any URL in\s+(.+)$/i)?.[1];
+
+    if (!fromAddress && !fromInput) {
+      throw new Error("Could not identify the selected GSC property.");
+    }
+
+    const addressProperty = fromAddress && parseProperty(fromAddress);
+    const inputProperty = fromInput && parseProperty(fromInput);
+
+    if (
+      addressProperty &&
+      inputProperty &&
+      propertyKey(addressProperty) !== propertyKey(inputProperty)
+    ) {
+      throw new Error(
+        "The property shown in the GSC input differs from the page property."
+      );
+    }
+
+    const property = addressProperty || inputProperty;
+    const target = new URL(targetUrl);
+
+    const matches = property.type === "domain"
+      ? (
+          target.hostname.toLowerCase() === property.value ||
+          target.hostname.toLowerCase().endsWith(`.${property.value}`)
+        )
+      : (
+          target.origin === new URL(property.value).origin &&
+          target.href.startsWith(property.value)
+        );
+
+    if (!matches) {
+      throw new Error(
+        `URL does not belong to the selected property (${property.value}).`
+      );
+    }
+
+    return { input, property };
+  }
+
+  function visible(element) {
+    if (!element || !element.getClientRects().length) return false;
+    const style = getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }
+
+  function requestButton() {
+    return [...document.querySelectorAll(
+      'button, [role="button"]'
+    )].find(element => {
+      const text = (element.innerText || element.textContent || "").trim();
+      const label = (element.getAttribute("aria-label") || "").trim();
+
+      return visible(element) && (
+        /^request indexing$/i.test(text) ||
+        /^request indexing$/i.test(label)
+      );
+    });
+  }
+
+  function activeDialog() {
+    return [...document.querySelectorAll(
+      '[role="dialog"], [aria-modal="true"]'
+    )].find(visible);
+  }
+
+  function clickElement(element) {
+    element.focus();
+
+    const options = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window
+    };
+
+    element.dispatchEvent(new MouseEvent("mousedown", options));
+    element.dispatchEvent(new MouseEvent("mouseup", options));
+    element.dispatchEvent(new MouseEvent("click", options));
+  }
+
+  function dismissDialog(dialog) {
+    const button = [...dialog.querySelectorAll(
+      'button, [role="button"]'
+    )].find(element =>
+      /^(got it|dismiss|ok|close)$/i.test(
+        (element.innerText || element.textContent || "").trim()
+      )
+    );
+
+    if (!button) return false;
+    clickElement(button);
+    return true;
+  }
+
+  function submitInspection(input, url) {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
       "value"
     )?.set;
 
-    if (nativeSetter) {
-      nativeSetter.call(input, value);
-    } else {
-      input.value = value;
-    }
+    input.focus();
+    input.click();
 
-    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }
+    if (setter) setter.call(input, url);
+    else input.value = url;
 
-  function dispatchEnter(input) {
-    const enterParams = {
+    input.dispatchEvent(new Event("input", {
+      bubbles: true,
+      composed: true
+    }));
+
+    input.dispatchEvent(new Event("change", {
+      bubbles: true
+    }));
+
+    const options = {
       key: "Enter",
       code: "Enter",
       keyCode: 13,
@@ -41,218 +170,197 @@
       composed: true
     };
 
-    input.dispatchEvent(new KeyboardEvent("keydown", enterParams));
-    input.dispatchEvent(new KeyboardEvent("keypress", enterParams));
-    input.dispatchEvent(new KeyboardEvent("keyup", enterParams));
-  }
-
-  function simulateUserClick(element) {
-    element.focus();
-    const opts = { bubbles: true, cancelable: true, composed: true, view: window };
-    element.dispatchEvent(new MouseEvent("mousedown", opts));
-    element.dispatchEvent(new MouseEvent("mouseup", opts));
-    element.dispatchEvent(new MouseEvent("click", opts));
-  }
-
-  function findPropertyMismatchModal() {
-    const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[aria-modal="true"]'));
-    for (const d of dialogs) {
-      const text = (d.innerText || "").toLowerCase();
-      if (text.includes("url not in property") || text.includes("currently selected property")) {
-        return d;
-      }
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      input.dispatchEvent(new KeyboardEvent(type, options));
     }
-    return null;
   }
 
-  function findDismissButton(dialog) {
-    const buttons = Array.from(dialog.querySelectorAll('button, div[role="button"], span[role="button"]'));
-    for (const b of buttons) {
-      const text = (b.innerText || b.textContent || "").trim().toLowerCase();
-      if (text === "dismiss" || text === "ok" || text === "close") {
-        return b;
+  function resultShowsUrl(url) {
+    const resultArea = document.querySelector('main, [role="main"]')
+      || document.body;
+
+    return (resultArea.innerText || "").includes(url);
+  }
+
+  async function waitForInspection(url, previousPage, hadButton) {
+    const deadline = Date.now() + 60000;
+    let observedLoading = false;
+    let buttonDisappeared = false;
+
+    while (Date.now() < deadline) {
+      await pause(500);
+
+      const dialog = activeDialog();
+      const dialogText = dialog?.innerText || "";
+
+      if (/url not in property|currently selected property/i.test(dialogText)) {
+        dismissDialog(dialog);
+        throw new Error("GSC rejected the URL as outside this property.");
       }
-    }
-    return null;
-  }
 
-  function findRequestIndexingButton() {
-    const candidates = Array.from(document.querySelectorAll('button, div[role="button"], span[role="button"]'));
-    for (const el of candidates) {
-      const text = (el.innerText || el.textContent || "").trim();
-      const aria = (el.getAttribute("aria-label") || "").trim();
+      const button = requestButton();
+      if (hadButton && !button) buttonDisappeared = true;
 
-      if (/^request indexing$/i.test(text) || /request indexing/i.test(aria)) {
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).display !== "none") {
-          return el;
+      if (/retrieving data|inspecting url/i.test(
+        document.body.innerText || ""
+      )) {
+        observedLoading = true;
+      }
+
+      const freshResult = (
+        location.href !== previousPage ||
+        observedLoading ||
+        buttonDisappeared ||
+        !hadButton
+      );
+
+      if (button && freshResult && resultShowsUrl(url)) {
+        if (
+          button.hasAttribute("disabled") ||
+          button.getAttribute("aria-disabled") === "true"
+        ) {
+          throw new Error("GSC's Request Indexing button is disabled.");
         }
+
+        return button;
       }
     }
-    return null;
+
+    throw new Error(
+      "Inspection was not confirmed for this exact URL within 60 seconds; indexing was not requested."
+    );
   }
 
-  function findConfirmationDialog() {
-    const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[aria-modal="true"]'));
-    for (const d of dialogs) {
-      const text = (d.innerText || "").toLowerCase();
+  async function waitForIndexingResult() {
+    const deadline = Date.now() + 90000;
+
+    while (Date.now() < deadline) {
+      await pause(750);
+
+      const dialog = activeDialog();
+      if (!dialog) continue;
+
+      const text = (dialog.innerText || "").trim();
+      const lower = text.toLowerCase();
+
+      if (lower.includes("added to a priority crawl queue")) {
+        const dismissed = dismissDialog(dialog);
+        return { success: true, message: text, dismissed };
+      }
+
       if (
-        text.includes("indexing requested") ||
-        text.includes("quota exceeded") ||
-        text.includes("indexing failed") ||
-        text.includes("can't be indexed") ||
-        text.includes("could not be indexed")
+        /quota|limit reached|indexing failed|can't be indexed|could not be indexed/i
+          .test(text)
       ) {
-        return d;
+        dismissDialog(dialog);
+        throw new Error(`GSC did not accept the request: ${text}`);
       }
     }
-    return null;
+
+    throw new Error(
+      "No GSC indexing confirmation appeared within 90 seconds."
+    );
   }
 
-  function findGotItButton(dialog) {
-    const buttons = Array.from(dialog.querySelectorAll('button, div[role="button"], span[role="button"]'));
-    for (const b of buttons) {
-      const text = (b.innerText || b.textContent || "").trim().toLowerCase();
-      if (text === "got it" || text === "ok" || text === "dismiss" || text === "close") {
-        return b;
+  async function runWorkflow({ runId, tabId, url }) {
+    const key = `gscRun_${tabId}`;
+
+    async function update(line, status) {
+      const state = (await chrome.storage.local.get(key))[key];
+
+      // Do not let an older run overwrite a newer run's report.
+      if (!state || state.runId !== runId) {
+        throw new Error("This run was replaced by another run.");
       }
-    }
-    return null;
-  }
 
-  async function executeRequestIndexingWorkflow() {
-    const button = findRequestIndexingButton();
-    if (!button) {
-      return { ok: false, error: "REQUEST_INDEXING_BUTTON_NOT_FOUND" };
+      state.lines.push(line);
+      if (status) state.status = status;
+      await chrome.storage.local.set({ [key]: state });
     }
 
-    if (button.getAttribute("aria-disabled") === "true") {
-      return { ok: false, error: "BUTTON_IS_DISABLED_BY_GSC" };
-    }
-
-    simulateUserClick(button);
-
-    const startTime = Date.now();
-    const timeoutMs = 75000;
-
-    while (Date.now() - startTime < timeoutMs) {
-      await new Promise(r => setTimeout(r, 1000));
-
-      const dialog = findConfirmationDialog();
-      if (dialog) {
-        const dialogText = dialog.innerText || "";
-        const lines = dialogText.split("\n").map(s => s.trim()).filter(Boolean);
-        const header = lines[0] || "Unknown Dialog";
-        const body = lines.slice(1).join(" ");
-
-        let outcome = "NOTICE";
-        const lower = dialogText.toLowerCase();
-        if (lower.includes("indexing requested") || lower.includes("added to a priority crawl queue")) {
-          outcome = "SUCCESS";
-        } else if (lower.includes("quota exceeded")) {
-          outcome = "QUOTA_EXCEEDED";
-        }
-
-        const gotItBtn = findGotItButton(dialog);
-        let dismissed = false;
-        if (gotItBtn) {
-          simulateUserClick(gotItBtn);
-          dismissed = true;
-        }
-
-        return {
-          ok: true,
-          outcome,
-          dialogHeader: header,
-          dialogBody: body,
-      dismissed
-        };
+    try {
+      const target = new URL(url);
+      if (!["http:", "https:"].includes(target.protocol)) {
+        throw new Error("Only HTTP and HTTPS URLs are supported.");
       }
-    }
 
-    return { ok: false, error: "TIMEOUT_WAITING_FOR_INDEXING_MODAL" };
+      const { input, property } = checkedProperty(target.href);
+
+      if (activeDialog()) {
+        throw new Error(
+          "A GSC dialog is already open. Close it and start again."
+        );
+      }
+
+      await update(
+        `2. OK — URL matches the selected ${property.type} property: ` +
+        property.value
+      );
+
+      const previousPage = location.href;
+      const hadButton = Boolean(requestButton());
+
+      submitInspection(input, target.href);
+      await update("3. Inspection submitted; waiting for this URL's result...");
+
+      const button = await waitForInspection(
+        target.href,
+        previousPage,
+        hadButton
+      );
+
+      await update(
+        "3. OK — GSC inspection result and enabled indexing button " +
+        "found for the requested URL."
+      );
+
+      if (activeDialog()) {
+        throw new Error("A GSC dialog appeared before indexing could start.");
+      }
+
+      clickElement(button);
+      await update("4. Request Indexing clicked; waiting for GSC...");
+
+      const result = await waitForIndexingResult();
+
+      await update(
+        `5. SUCCESS — GSC added the URL to its priority crawl queue. ` +
+        `Confirmation dismissed: ${result.dismissed}.`,
+        "SUCCESS"
+      );
+    } catch (error) {
+      try {
+        await update(`STOPPED: ${error.message}`, "FAILED");
+      } catch (reportError) {
+        console.error("Could not save GSC run report:", reportError);
+      }
+    } finally {
+      running = false;
+    }
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || typeof message !== "object") return;
-
-    if (message.type === "SUBMIT_INSPECTION_URL") {
-      try {
-        const found = findGscSearchInput();
-        if (!found) {
-          sendResponse({ ok: false, error: "INPUT_NOT_FOUND" });
-          return true;
-        }
-
-        const input = found.element;
-        input.focus();
-        input.click();
-
-        setInputValue(input, message.url);
-        dispatchEnter(input);
-
-        // Check quickly if a property mismatch modal pops up
-        setTimeout(() => {
-          const mismatchModal = findPropertyMismatchModal();
-          if (mismatchModal) {
-            const dismissBtn = findDismissButton(mismatchModal);
-            if (dismissBtn) simulateUserClick(dismissBtn);
-          }
-        }, 1500);
-
-        sendResponse({
-          ok: true,
-          appliedValue: input.value
-        });
-      } catch (err) {
-        sendResponse({ ok: false, error: err.message || String(err) });
-      }
-      return true;
+    if (message?.type === "GSC_PING") {
+      sendResponse({ reply: "PONG" });
+      return;
     }
 
-    if (message.type === "FIND_REQUEST_INDEXING_BUTTON") {
-      // Check if property mismatch modal is blocking
-      const mismatchModal = findPropertyMismatchModal();
-      if (mismatchModal) {
-        sendResponse({
-          found: false,
-          reason: "URL_NOT_IN_PROPERTY: The URL does not belong to the active GSC property."
-        });
-        return true;
-      }
-
-      const button = findRequestIndexingButton();
-      if (!button) {
-        sendResponse({
-          found: false,
-          reason: "No button with text 'Request Indexing' found."
-        });
-        return true;
-      }
-
-      const rect = button.getBoundingClientRect();
-      sendResponse({
-        found: true,
-        text: button.innerText.trim(),
-        tag: button.tagName.toLowerCase(),
-        role: button.getAttribute("role") || "native-button",
-        ariaDisabled: button.getAttribute("aria-disabled") || "false",
-        disabledAttr: button.hasAttribute("disabled"),
-        rect: {
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height
-        }
-      });
-      return true;
+    if (message?.type === "GSC_RUN_STATUS") {
+      sendResponse({ running });
+      return;
     }
 
-    if (message.type === "EXECUTE_REQUEST_INDEXING") {
-      executeRequestIndexingWorkflow()
-        .then(result => sendResponse(result))
-        .catch(err => sendResponse({ ok: false, error: err.message || String(err) }));
-      return true;
+    if (message?.type === "GSC_START") {
+      if (running) {
+        sendResponse({ ok: false, error: "A run is already active." });
+        return;
+      }
+
+      running = true;
+      sendResponse({ ok: true });
+
+      // Continue in the tab; the popup does not need to remain open.
+      void runWorkflow(message);
     }
   });
 })();

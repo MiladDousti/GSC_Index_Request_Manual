@@ -1,119 +1,167 @@
-async function getActiveGscTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) throw new Error("No active tab identified.");
-  if (!tab.url || !tab.url.startsWith("https://search.google.com/")) {
-    throw new Error(`Target tab is not GSC:\n${tab.url || "unknown"}`);
+const urlInput = document.getElementById("targetUrl");
+const startButton = document.getElementById("startBtn");
+const reportBox = document.getElementById("report");
+
+let currentKey = null;
+let starting = false;
+
+function render(state) {
+  reportBox.textContent = state.lines.join("\n");
+  startButton.disabled = starting || state.status === "RUNNING";
+}
+
+function showError(message) {
+  reportBox.textContent = `FAILED: ${message}`;
+  startButton.disabled = false;
+}
+
+async function saveState(key, state) {
+  await chrome.storage.local.set({ [key]: state });
+  if (key === currentKey) render(state);
+}
+
+async function sendToTab(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    // Inject only when there is no content-script receiver.
+    if (!/Receiving end does not exist/i.test(error.message)) {
+      throw error;
+    }
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+
+    return chrome.tabs.sendMessage(tabId, message);
   }
+}
+
+async function getGscTab() {
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true
+  });
+
+  if (!tab?.id) throw new Error("No active tab found.");
+
+  const page = new URL(tab.url || "about:blank");
+  if (
+    page.origin !== "https://search.google.com" ||
+    !page.pathname.includes("/search-console")
+  ) {
+    throw new Error("Open the intended Google Search Console tab first.");
+  }
+
   return tab;
 }
 
-async function sendTabMessage(tab, payload) {
+async function restoreReport() {
   try {
-    return await chrome.tabs.sendMessage(tab.id, payload);
-  } catch (err) {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["content.js"]
-    });
-    await new Promise(r => setTimeout(r, 150));
-    return await chrome.tabs.sendMessage(tab.id, payload);
+    const tab = await getGscTab();
+    currentKey = `gscRun_${tab.id}`;
+
+    const stored = (await chrome.storage.local.get(currentKey))[currentKey];
+    if (!stored) return;
+
+    urlInput.value = stored.url;
+    render(stored);
+
+    // A tab reload can terminate an in-progress content script.
+    if (stored.status === "RUNNING") {
+      const response = await sendToTab(tab.id, { type: "GSC_RUN_STATUS" });
+
+      if (!response?.running) {
+        stored.status = "INTERRUPTED";
+        stored.lines.push(
+          "STOPPED: The previous run is no longer active. Check GSC before starting again."
+        );
+        await saveState(currentKey, stored);
+      }
+    }
+  } catch {
+    // The popup can still display a fresh error when Start is clicked.
   }
 }
 
-// Step 1: Type URL and Submit
-document.getElementById("inspectBtn").addEventListener("click", async () => {
-  const statusBox = document.getElementById("status-box");
-  const url = document.getElementById("targetUrl").value.trim();
-
-  if (!url) {
-    statusBox.className = "err";
-    statusBox.textContent = "Please enter a valid URL.";
-    return;
-  }
-
-  statusBox.className = "";
-  statusBox.textContent = `Submitting:\n${url}...`;
-
-  try {
-    const tab = await getActiveGscTab();
-    const res = await sendTabMessage(tab, { type: "SUBMIT_INSPECTION_URL", url });
-
-    if (res?.ok) {
-      statusBox.className = "ok";
-      statusBox.textContent = `SUCCESS: Inspection Triggered!\nTarget: ${res.appliedValue}\n\nWait until GSC finishes loading, then check button or request indexing.`;
-    } else {
-      statusBox.className = "err";
-      statusBox.textContent = `FAILED:\n${res?.error || "Unknown error"}`;
-    }
-  } catch (err) {
-    statusBox.className = "err";
-    statusBox.textContent = `Error:\n${err.message}`;
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && currentKey && changes[currentKey]?.newValue) {
+    render(changes[currentKey].newValue);
   }
 });
 
-// Step 2: Check "Request Indexing" Button
-document.getElementById("findRequestBtn").addEventListener("click", async () => {
-  const statusBox = document.getElementById("status-box");
-  statusBox.className = "";
-  statusBox.textContent = "Scanning active DOM for 'Request Indexing' button...";
+startButton.addEventListener("click", async () => {
+  if (starting) return;
+  starting = true;
+  startButton.disabled = true;
+
+  let state;
 
   try {
-    const tab = await getActiveGscTab();
-    const res = await sendTabMessage(tab, { type: "FIND_REQUEST_INDEXING_BUTTON" });
+    const target = new URL(urlInput.value.trim());
 
-    if (res?.found) {
-      statusBox.className = "ok";
-      statusBox.textContent = [
-        "SUCCESS: Button Found!",
-        "",
-        `Text: "${res.text}"`,
-        `Tag: <${res.tag}>`,
-        `Role: ${res.role}`,
-        `Aria-Disabled: ${res.ariaDisabled}`,
-        `Disabled Attribute: ${res.disabledAttr}`,
-        `Position: Top=${Math.round(res.rect.top)}px, Left=${Math.round(res.rect.left)}px`
-      ].join("\n");
-    } else {
-      statusBox.className = "err";
-      statusBox.textContent = [
-        "FAILED: Button not found.",
-        "",
-        `Reason: ${res?.reason || "Element not detected"}`
-      ].join("\n");
+    if (!["http:", "https:"].includes(target.protocol)) {
+      throw new Error("Enter an HTTP or HTTPS URL.");
     }
-  } catch (err) {
-    statusBox.className = "err";
-    statusBox.textContent = `Error:\n${err.message}`;
-  }
-});
 
-// Step 3: Click Request Indexing & Await Result
-document.getElementById("triggerRequestBtn").addEventListener("click", async () => {
-  const statusBox = document.getElementById("status-box");
-  statusBox.className = "warn";
-  statusBox.textContent = "Dispatching click on 'Request Indexing'...\nWaiting for GSC live test and confirmation dialog (up to 75s)...";
+    reportBox.textContent = "1. Checking the GSC tab and content script...";
 
-  try {
-    const tab = await getActiveGscTab();
-    const res = await sendTabMessage(tab, { type: "EXECUTE_REQUEST_INDEXING" });
+    const tab = await getGscTab();
+    currentKey = `gscRun_${tab.id}`;
 
-    if (res?.ok) {
-      if (res.outcome === "SUCCESS") {
-        statusBox.className = "ok";
-        statusBox.textContent = `SUCCESS: Indexing Requested!\n\nOutcome: ${res.outcome}\nHeader: "${res.dialogHeader}"\nBody: "${res.dialogBody}"\nDismissed ("Got it"): ${res.dismissed}`;
-      } else if (res.outcome === "QUOTA_EXCEEDED") {
-        statusBox.className = "warn";
-        statusBox.textContent = `QUOTA HIT: Daily quota reached!\n\nOutcome: ${res.outcome}\nMessage: "${res.dialogBody}"\nDismissed: ${res.dismissed}`;
-      } else {
-        statusBox.className = "err";
-        statusBox.textContent = `COMPLETED WITH NOTICE:\n\nOutcome: ${res.outcome}\nHeader: "${res.dialogHeader}"\nBody: "${res.dialogBody}"`;
+    const existing = (await chrome.storage.local.get(currentKey))[currentKey];
+    if (existing?.status === "RUNNING") {
+      const status = await sendToTab(tab.id, { type: "GSC_RUN_STATUS" });
+      if (status?.running) {
+        throw new Error("A run is already active in this GSC tab.");
       }
-    } else {
-      statusBox.className = "err";
-      statusBox.textContent = `FAILED:\n${res?.error || "Unknown error during indexing request"}`;
     }
-  } catch (err) {
-    statusBox.className = "err";
-    statusBox.textContent = `Execution Error:\n${err.message}`;
+
+    state = {
+      runId: crypto.randomUUID(),
+      tabId: tab.id,
+      url: target.href,
+      status: "RUNNING",
+      lines: ["1. Checking the GSC tab and content script..."]
+    };
+    await saveState(currentKey, state);
+
+    const ping = await sendToTab(tab.id, { type: "GSC_PING" });
+    if (ping?.reply !== "PONG") {
+      throw new Error("GSC tab is open, but the content script did not respond.");
+    }
+
+    state.lines[0] = "1. OK — GSC tab and content script are responding.";
+    await saveState(currentKey, state);
+
+    const started = await sendToTab(tab.id, {
+      type: "GSC_START",
+      runId: state.runId,
+      tabId: tab.id,
+      url: target.href
+    });
+
+    if (!started?.ok) {
+      throw new Error(started?.error || "Could not start the workflow.");
+    }
+  } catch (error) {
+    if (state && currentKey) {
+      state.status = "FAILED";
+      state.lines.push(`STOPPED: ${error.message}`);
+      await saveState(currentKey, state);
+    } else {
+      showError(error.message);
+    }
+  } finally {
+    starting = false;
+    if (currentKey) {
+      const saved = (await chrome.storage.local.get(currentKey))[currentKey];
+      if (saved) render(saved);
+    } else {
+      startButton.disabled = false;
+    }
   }
 });
+
+restoreReport();

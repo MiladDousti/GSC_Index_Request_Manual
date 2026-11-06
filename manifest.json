@@ -1,16 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "GSC Diagnostic Ping",
+  "name": "GSC Indexing Tester",
   "version": "1.0.0",
-  "description": "Diagnostic tool to verify MV3 content script injection and communication.",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "tabs"
-  ],
-  "host_permissions": [
-    "https://search.google.com/*"
-  ],
+  "description": "Inspect one URL and request indexing in Google Search Console.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": ["https://search.google.com/*"],
   "action": {
     "default_popup": "popup.html"
   },
