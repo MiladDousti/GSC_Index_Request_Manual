@@ -14,22 +14,16 @@
 
   function parseProperty(value) {
     let text = decodeURIComponent(value).trim();
-
     if (text.toLowerCase().startsWith("sc-domain:")) {
       return { type: "domain", value: text.slice(10).toLowerCase().replace(/\/+$/, "") };
     }
-
     if (/^https?:\/\//i.test(text)) {
       return { type: "prefix", value: new URL(text).href };
     }
-
-    // Strip quotation marks or surrounding wrappers if present
     text = text.replace(/["']/g, "");
-
     if (/^[a-z0-9.-]+$/i.test(text)) {
       return { type: "domain", value: text.toLowerCase().replace(/\/+$/, "") };
     }
-
     throw new Error(`Unrecognized GSC property: ${text}`);
   }
 
@@ -80,10 +74,8 @@
 
   function getActiveBlockingDialog() {
     const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div[aria-modal="true"]')).filter(isElementVisible);
-
     for (const d of dialogs) {
       const text = (d.innerText || "").toLowerCase();
-      // Only target actual modal alerts, ignore property selector dropdown menus
       if (
         text.includes("url not in property") ||
         text.includes("currently selected property") ||
@@ -148,18 +140,11 @@
     }
   }
 
-  function resultShowsUrl(url) {
-    const main = document.querySelector('main, [role="main"]') || document.body;
-    return (main.innerText || "").includes(url);
-  }
-
-  async function waitForInspection(url, prevUrl, hadButton) {
-    const deadline = Date.now() + 65000;
-    let observedLoading = false;
-    let buttonDisappeared = false;
+  async function waitForInspection(url) {
+    const deadline = Date.now() + 45000;
 
     while (Date.now() < deadline) {
-      await pause(600);
+      await pause(800);
 
       const dialog = getActiveBlockingDialog();
       if (dialog) {
@@ -170,33 +155,21 @@
         }
       }
 
+      // Check if the "Request Indexing" button has appeared and is active
       const button = requestButton();
-      if (hadButton && !button) buttonDisappeared = true;
-
-      if (/retrieving data|inspecting url/i.test(document.body.innerText || "")) {
-        observedLoading = true;
-      }
-
-      const stateChanged = (
-        location.href !== prevUrl ||
-        observedLoading ||
-        buttonDisappeared ||
-        !hadButton
-      );
-
-      if (button && stateChanged && resultShowsUrl(url)) {
+      if (button) {
         if (button.hasAttribute("disabled") || button.getAttribute("aria-disabled") === "true") {
-          throw new Error("GSC's Request Indexing button is currently disabled.");
+          continue; // Wait until it's fully enabled
         }
         return button;
       }
     }
 
-    throw new Error("Inspection results timed out (65s). Indexing was not requested.");
+    throw new Error("Inspection results timed out (45s). 'Request Indexing' button did not appear.");
   }
 
   async function waitForIndexingResult() {
-    const deadline = Date.now() + 85000;
+    const deadline = Date.now() + 60000;
 
     while (Date.now() < deadline) {
       await pause(800);
@@ -218,7 +191,7 @@
       }
     }
 
-    throw new Error("Timeout: No confirmation dialog detected from GSC within 85 seconds.");
+    throw new Error("Timeout: No confirmation dialog detected from GSC within 60 seconds.");
   }
 
   async function runWorkflow({ runId, tabId, url }) {
@@ -237,7 +210,6 @@
       const target = new URL(url);
       const { input, property } = checkedProperty(target.href);
 
-      // Clean up any stray residual mismatch dialog before starting
       const lingeringModal = getActiveBlockingDialog();
       if (lingeringModal) {
         dismissDialog(lingeringModal);
@@ -246,16 +218,13 @@
 
       await update(`2. OK — Target URL belongs to verified property: ${property.value}`);
 
-      const previousUrl = location.href;
-      const hadButton = Boolean(requestButton());
-
       submitInspection(input, target.href);
-      await update("3. Inspection dispatched. Awaiting DOM evaluation...");
+      await update("3. Inspection dispatched. Awaiting GSC inspection results & Request Indexing button...");
 
-      const button = await waitForInspection(target.href, previousUrl, hadButton);
-      await update("3. OK — URL inspection complete. Request Indexing button active.");
+      const button = await waitForInspection(target.href);
+      await update("3. OK — URL inspection complete. Request Indexing button found.");
 
-      await pause(500);
+      await pause(600);
       clickElement(button);
       await update("4. Clicked 'Request Indexing'. Awaiting GSC response...");
 
